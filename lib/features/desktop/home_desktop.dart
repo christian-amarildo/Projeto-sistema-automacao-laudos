@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dropzone_page.dart';
 
 class HomeDesktop extends StatelessWidget {
   const HomeDesktop({super.key});
@@ -7,9 +8,7 @@ class HomeDesktop extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('ForensiChain Desktop')),
-      body: const Center(
-        child: Text('Desktop Interface - Drag & Drop & Validation'),
-      ),
+      body: const DropzonePage(),
     );
   }
 }

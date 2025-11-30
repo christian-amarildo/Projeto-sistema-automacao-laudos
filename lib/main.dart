@@ -1,43 +1,20 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
-import 'features/mobile/home_mobile.dart';
-import 'features/desktop/home_desktop.dart';
+import 'features/mobile/login_page.dart';
+import 'features/desktop/inspection_page.dart';
 
 void main() {
   runApp(const ProviderScope(child: ForensiChainApp()));
 }
 
-final routerProvider = Provider<GoRouter>((ref) {
-  return GoRouter(
-    initialLocation: '/',
-    routes: [
-      GoRoute(
-        path: '/',
-        builder: (context, state) {
-          // Use defaultTargetPlatform to allow testing with debugDefaultTargetPlatformOverride
-          final platform = defaultTargetPlatform;
-          if (platform == TargetPlatform.windows ||
-              platform == TargetPlatform.linux ||
-              platform == TargetPlatform.macOS) {
-            return const HomeDesktop();
-          } else {
-            return const HomeMobile();
-          }
-        },
-      ),
-    ],
-  );
-});
-
-class ForensiChainApp extends ConsumerWidget {
+class ForensiChainApp extends StatelessWidget {
   const ForensiChainApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final router = ref.watch(routerProvider);
-    return MaterialApp.router(
+  Widget build(BuildContext context) {
+    return MaterialApp(
       title: 'ForensiChain',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF1E1E1E),
@@ -52,7 +29,16 @@ class ForensiChainApp extends ConsumerWidget {
           elevation: 0,
         ),
       ),
-      routerConfig: router,
+      home: _getHomeWidget(),
     );
+  }
+
+  Widget _getHomeWidget() {
+    if (kIsWeb) return const LoginPage(); // Web defaults to mobile view for now
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      return const InspectionPage();
+    } else {
+      return const LoginPage();
+    }
   }
 }
