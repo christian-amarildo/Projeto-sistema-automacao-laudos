@@ -18,7 +18,10 @@ class HomeMobile extends StatelessWidget {
               onPressed: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (context) => const GuidedCollectionPage(),
+                    builder: (context) => const GuidedCollectionPage(
+                      bop: 'TEST-123',
+                      model: 'celular',
+                    ),
                   ),
                 );
               },

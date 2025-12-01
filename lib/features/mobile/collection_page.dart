@@ -1,12 +1,21 @@
 import 'package:flutter/material.dart';
-
 import 'dart:io';
 import 'dart:async';
 import 'dart:math';
 import 'package:image_picker/image_picker.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:crypto/crypto.dart';
+import 'review_packaging_page.dart';
 
 class GuidedCollectionPage extends StatefulWidget {
-  const GuidedCollectionPage({super.key});
+  final String bop;
+  final String model;
+
+  const GuidedCollectionPage({
+    super.key,
+    required this.bop,
+    required this.model,
+  });
 
   @override
   State<GuidedCollectionPage> createState() => _GuidedCollectionPageState();
@@ -36,70 +45,14 @@ class _GuidedCollectionPageState extends State<GuidedCollectionPage> {
   bool showAddPhotoDialog = false;
   final TextEditingController _customPhotoController = TextEditingController();
 
-  Future<void> _capturePhoto(int slotId) async {
-    final ImagePicker picker = ImagePicker();
-    try {
-      final XFile? image = await picker.pickImage(source: ImageSource.camera);
+  // Speech to Text
+  late stt.SpeechToText _speech;
+  bool _isListening = false;
 
-      if (image == null) return;
-
-      setState(() {
-        slots = slots.map((slot) {
-          if (slot.id == slotId) {
-            return slot.copyWith(
-              capturing: false,
-              validating: true,
-              imageUrl: image.path,
-            );
-          }
-          return slot;
-        }).toList();
-      });
-
-      // Simulate hash generation (1.5 seconds)
-      Timer(const Duration(milliseconds: 1500), () {
-        final hash = _generateHash();
-        setState(() {
-          slots = slots.map((slot) {
-            if (slot.id == slotId) {
-              return slot.copyWith(
-                validating: false,
-                captured: true,
-                hash: hash,
-              );
-            }
-            return slot;
-          }).toList();
-        });
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao capturar foto: $e')),
-      );
-    }
-  }
-
-  String _generateHash() {
-    const chars = '0123456789abcdef';
-    final rnd = Random();
-    return List.generate(64, (index) => chars[rnd.nextInt(chars.length)])
-        .join();
-  }
-
-  void _toggleAudioRecording(int slotId) {
-    setState(() {
-      if (recordingAudioId == slotId) {
-        recordingAudioId = null;
-        slots = slots.map((slot) {
-          if (slot.id == slotId) {
-            return slot.copyWith(observation: 'Observação gravada via áudio');
-          }
-          return slot;
-        }).toList();
-      } else {
-        recordingAudioId = slotId;
-      }
-    });
+  @override
+  void initState() {
+    super.initState();
+    _speech = stt.SpeechToText();
   }
 
   void _addCustomPhoto() {
@@ -444,7 +397,16 @@ class _GuidedCollectionPageState extends State<GuidedCollectionPage> {
                     child: ElevatedButton(
                       onPressed: canFinalize
                           ? () {
-                              // Navigate to review
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => ReviewPackagingPage(
+                                    slots: slots,
+                                    bop: widget.bop,
+                                    type: widget.model,
+                                  ),
+                                ),
+                              );
                             }
                           : null,
                       style: ElevatedButton.styleFrom(
@@ -485,6 +447,71 @@ class _GuidedCollectionPageState extends State<GuidedCollectionPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _capturePhoto(int slotId) async {
+    final picker = ImagePicker();
+
+    // Update state to capturing
+    setState(() {
+      slots = slots.map((s) {
+        if (s.id == slotId) {
+          return s.copyWith(capturing: true);
+        }
+        return s;
+      }).toList();
+    });
+
+    try {
+      final XFile? photo = await picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+      );
+
+      if (photo != null) {
+        // Calculate hash
+        final bytes = await photo.readAsBytes();
+        final hash = sha256.convert(bytes).toString();
+
+        setState(() {
+          slots = slots.map((s) {
+            if (s.id == slotId) {
+              return s.copyWith(
+                captured: true,
+                capturing: false,
+                imageUrl: photo.path,
+                hash: hash,
+                capturedAt: DateTime.now(),
+              );
+            }
+            return s;
+          }).toList();
+        });
+      } else {
+        // Cancelled
+        setState(() {
+          slots = slots.map((s) {
+            if (s.id == slotId) {
+              return s.copyWith(capturing: false);
+            }
+            return s;
+          }).toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Error capturing photo: $e');
+      setState(() {
+        slots = slots.map((s) {
+          if (s.id == slotId) {
+            return s.copyWith(capturing: false);
+          }
+          return s;
+        }).toList();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao capturar foto: $e')),
+      );
+    }
   }
 
   Widget _buildEvidenceCard(PhotoSlot slot) {
@@ -802,17 +829,15 @@ class _GuidedCollectionPageState extends State<GuidedCollectionPage> {
                 Row(
                   children: [
                     InkWell(
-                      onTap: () => _toggleAudioRecording(slot.id),
+                      onTap: () => _showObservationDialog(context, slot),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
-                          color: recordingAudioId == slot.id
-                              ? red500
-                              : slot.observation != null
-                                  ? emerald500.withOpacity(0.2)
-                                  : const Color(0xFF374151),
+                          color: slot.observation != null
+                              ? emerald500.withOpacity(0.2)
+                              : const Color(0xFF374151),
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
                             color: slot.observation != null
@@ -822,26 +847,20 @@ class _GuidedCollectionPageState extends State<GuidedCollectionPage> {
                         ),
                         child: Row(
                           children: [
-                            Icon(Icons.mic,
+                            Icon(Icons.edit_note,
                                 size: 16,
-                                color: recordingAudioId == slot.id
-                                    ? Colors.white
-                                    : (slot.observation != null
-                                        ? emerald500
-                                        : textGray)),
+                                color: slot.observation != null
+                                    ? emerald500
+                                    : textGray),
                             const SizedBox(width: 8),
                             Text(
-                              recordingAudioId == slot.id
-                                  ? 'Gravando...'
-                                  : slot.observation != null
-                                      ? 'Observação adicionada'
-                                      : 'Adicionar observação',
+                              slot.observation != null
+                                  ? 'Editar observação'
+                                  : 'Adicionar observação',
                               style: TextStyle(
-                                color: recordingAudioId == slot.id
-                                    ? Colors.white
-                                    : (slot.observation != null
-                                        ? emerald500
-                                        : textGray),
+                                color: slot.observation != null
+                                    ? emerald500
+                                    : textGray,
                                 fontSize: 14,
                               ),
                             ),
@@ -849,8 +868,7 @@ class _GuidedCollectionPageState extends State<GuidedCollectionPage> {
                         ),
                       ),
                     ),
-                    if (slot.observation != null &&
-                        recordingAudioId != slot.id) ...[
+                    if (slot.observation != null) ...[
                       const SizedBox(width: 8),
                       IconButton(
                         icon:
@@ -859,8 +877,7 @@ class _GuidedCollectionPageState extends State<GuidedCollectionPage> {
                           setState(() {
                             slots = slots.map((s) {
                               if (s.id == slot.id) {
-                                return s.copyWith(
-                                    observation: null); // Clear observation
+                                return s.copyWith(observation: null);
                               }
                               return s;
                             }).toList();
@@ -874,23 +891,6 @@ class _GuidedCollectionPageState extends State<GuidedCollectionPage> {
                     ],
                   ],
                 ),
-                if (slot.observation != null) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1F2937),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF374151)),
-                    ),
-                    child: Text(
-                      slot.observation!,
-                      style: const TextStyle(
-                          color: Color(0xFFD1D5DB), fontSize: 14),
-                    ),
-                  ),
-                ],
               ],
             )
           else
@@ -922,6 +922,135 @@ class _GuidedCollectionPageState extends State<GuidedCollectionPage> {
       ),
     );
   }
+
+  void _showObservationDialog(BuildContext context, PhotoSlot slot) {
+    final textController = TextEditingController(text: slot.observation);
+
+    // Use a StatefulWidget for the dialog to handle listening state updates
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(builder: (context, setStateDialog) {
+        return AlertDialog(
+          backgroundColor: cardDark,
+          title: const Text('Adicionar Observação',
+              style: TextStyle(color: textWhite)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: textController,
+                style: const TextStyle(color: textWhite),
+                maxLines: 3,
+                decoration: InputDecoration(
+                  hintText: 'Digite ou grave sua observação...',
+                  hintStyle: const TextStyle(color: textGray),
+                  filled: true,
+                  fillColor: bgDark,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: const BorderSide(color: Color(0xFF374151)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: () async {
+                  if (_isListening) {
+                    // Stop listening
+                    await _speech.stop();
+                    setStateDialog(() => _isListening = false);
+                  } else {
+                    // Start listening
+                    bool available = await _speech.initialize(
+                      onStatus: (status) {
+                        if (status == 'notListening') {
+                          if (context.mounted)
+                            setStateDialog(() => _isListening = false);
+                        }
+                      },
+                      onError: (errorNotification) {
+                        if (context.mounted)
+                          setStateDialog(() => _isListening = false);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                              content:
+                                  Text('Erro: ${errorNotification.errorMsg}')),
+                        );
+                      },
+                    );
+
+                    if (available) {
+                      setStateDialog(() => _isListening = true);
+                      _speech.listen(
+                        onResult: (result) {
+                          setStateDialog(() {
+                            // Append only the new part or handle partial results
+                            // For simplicity, we just append the final result or update current
+                            if (result.finalResult) {
+                              textController.text +=
+                                  " ${result.recognizedWords}";
+                            }
+                          });
+                        },
+                        localeId: 'pt_BR',
+                      );
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content:
+                                Text('Reconhecimento de fala não disponível')),
+                      );
+                    }
+                  }
+                },
+                icon: Icon(_isListening ? Icons.stop : Icons.mic),
+                label: Text(_isListening ? 'Parar Gravação' : 'Gravar Áudio'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      _isListening ? red500 : const Color(0xFF374151),
+                  foregroundColor: textWhite,
+                ),
+              ),
+              if (_isListening)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8.0),
+                  child: Text("Ouvindo...",
+                      style: TextStyle(color: red500, fontSize: 12)),
+                )
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                if (_isListening) _speech.stop();
+                Navigator.pop(context);
+              },
+              child: const Text('Cancelar', style: TextStyle(color: textGray)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (_isListening) _speech.stop();
+                setState(() {
+                  slots = slots.map((s) {
+                    if (s.id == slot.id) {
+                      return s.copyWith(
+                          observation: textController.text.isNotEmpty
+                              ? textController.text
+                              : null);
+                    }
+                    return s;
+                  }).toList();
+                });
+                Navigator.pop(context);
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: cyan500),
+              child: const Text('Salvar'),
+            ),
+          ],
+        );
+      }),
+    );
+  }
 }
 
 class PhotoSlot {
@@ -935,6 +1064,7 @@ class PhotoSlot {
   final String? hash;
   final String? observation;
   final bool isCustom;
+  final DateTime? capturedAt;
 
   PhotoSlot({
     required this.id,
@@ -947,6 +1077,7 @@ class PhotoSlot {
     this.hash,
     this.observation,
     this.isCustom = false,
+    this.capturedAt,
   });
 
   PhotoSlot copyWith({
@@ -960,6 +1091,7 @@ class PhotoSlot {
     String? hash,
     String? observation, // Allow null to clear
     bool? isCustom,
+    DateTime? capturedAt,
   }) {
     return PhotoSlot(
       id: id ?? this.id,
@@ -970,8 +1102,9 @@ class PhotoSlot {
       validating: validating ?? this.validating,
       imageUrl: imageUrl ?? this.imageUrl,
       hash: hash ?? this.hash,
-      observation: observation, // Pass directly to allow null
+      observation: observation ?? this.observation,
       isCustom: isCustom ?? this.isCustom,
+      capturedAt: capturedAt ?? this.capturedAt,
     );
   }
 }

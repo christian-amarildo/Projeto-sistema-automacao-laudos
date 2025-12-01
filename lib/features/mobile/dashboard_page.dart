@@ -1,35 +1,38 @@
 import 'package:flutter/material.dart';
 import 'occurrence_data_page.dart';
+import 'services/case_repository.dart';
 
-class DashboardPage extends StatelessWidget {
+class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final cases = [
-      {
-        'id': 1,
-        'bop': '12345/2025.000001-0',
-        'type': 'Celular Samsung',
-        'crime': 'Furto',
-        'status': 'draft',
-      },
-      {
-        'id': 2,
-        'bop': '12346/2025.000002-0',
-        'type': 'iPhone 13 Pro',
-        'crime': 'Roubo',
-        'status': 'ready',
-      },
-      {
-        'id': 3,
-        'bop': '12347/2025.000003-0',
-        'type': 'Notebook Dell',
-        'crime': 'Estelionato',
-        'status': 'synced',
-      },
-    ];
+  State<DashboardPage> createState() => _DashboardPageState();
+}
 
+class _DashboardPageState extends State<DashboardPage> {
+  final _repository = CaseRepository();
+  List<Map<String, dynamic>> _cases = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCases();
+  }
+
+  Future<void> _loadCases() async {
+    setState(() => _isLoading = true);
+    final cases = await _repository.getCases();
+    if (mounted) {
+      setState(() {
+        _cases = cases.reversed.toList(); // Show newest first
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF111827), // gray-900
       appBar: AppBar(
@@ -64,32 +67,57 @@ class DashboardPage extends StatelessWidget {
           const SizedBox(width: 16),
         ],
       ),
-      body: Stack(
-        children: [
-          ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: cases.length,
-            separatorBuilder: (context, index) => const SizedBox(height: 16),
-            itemBuilder: (context, index) {
-              final caso = cases[index];
-              return _buildCaseCard(context, caso);
-            },
-          ),
-          Positioned(
-            bottom: 24,
-            left: 24,
-            child: const Text(
-              'Última sincronização: Hoje às 14:32',
-              style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
-            ),
-          ),
-        ],
-      ),
+      body: _isLoading
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF06B6D4)))
+          : _cases.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.folder_open,
+                          size: 64,
+                          color: const Color(0xFF9CA3AF).withOpacity(0.5)),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Nenhum caso iniciado',
+                        style: TextStyle(color: Color(0xFF9CA3AF)),
+                      ),
+                    ],
+                  ),
+                )
+              : Stack(
+                  children: [
+                    ListView.separated(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _cases.length,
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(height: 16),
+                      itemBuilder: (context, index) {
+                        final caso = _cases[index];
+                        return _buildCaseCard(context, caso);
+                      },
+                    ),
+                    Positioned(
+                      bottom: 24,
+                      left: 24,
+                      child: const Text(
+                        'Armazenamento Local',
+                        style:
+                            TextStyle(color: Color(0xFF6B7280), fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
-          Navigator.of(context).push(
+          Navigator.of(context)
+              .push(
             MaterialPageRoute(builder: (context) => const OccurrenceDataPage()),
-          );
+          )
+              .then((_) {
+            _loadCases(); // Reload when coming back
+          });
         },
         backgroundColor: const Color(0xFF06B6D4),
         child: const Icon(Icons.add, size: 32),
@@ -99,10 +127,12 @@ class DashboardPage extends StatelessWidget {
 
   Widget _buildCaseCard(BuildContext context, Map<String, dynamic> caso) {
     IconData icon;
-    String type = caso['type'];
-    if (type.contains('Celular') || type.contains('iPhone')) {
+    String type = caso['type'] ?? 'Desconhecido';
+    if (type.contains('Celular') ||
+        type.contains('iPhone') ||
+        type.contains('Samsung')) {
       icon = Icons.smartphone;
-    } else if (type.contains('Notebook')) {
+    } else if (type.contains('Notebook') || type.contains('Computador')) {
       icon = Icons.computer;
     } else {
       icon = Icons.storage;
@@ -155,7 +185,7 @@ class DashboardPage extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    caso['bop'],
+                    caso['bop'] ?? 'Sem BOP',
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
@@ -165,12 +195,12 @@ class DashboardPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    caso['type'],
+                    type,
                     style:
                         const TextStyle(color: Color(0xFFD1D5DB), fontSize: 14),
                   ),
                   Text(
-                    caso['crime'],
+                    caso['crime'] ?? 'Não informado',
                     style:
                         const TextStyle(color: Color(0xFF6B7280), fontSize: 12),
                   ),
@@ -178,21 +208,31 @@ class DashboardPage extends StatelessWidget {
               ),
             ],
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: statusBg.withOpacity(0.5),
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: statusColor.withOpacity(0.3)),
-            ),
-            child: Text(
-              statusText,
-              style: TextStyle(
-                color: statusColor,
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusBg.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: statusColor.withOpacity(0.3)),
+                ),
+                child: Text(
+                  statusText,
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
-            ),
+              if (caso['hash'] != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Icon(Icons.lock, size: 12, color: statusColor),
+                ),
+            ],
           ),
         ],
       ),

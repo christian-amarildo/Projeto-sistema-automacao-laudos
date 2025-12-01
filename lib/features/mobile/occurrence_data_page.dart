@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:image_picker/image_picker.dart';
 import 'collection_page.dart';
 
 class OccurrenceDataPage extends StatefulWidget {
@@ -26,29 +28,115 @@ class _OccurrenceDataPageState extends State<OccurrenceDataPage> {
   final _forensicAreaController = TextEditingController();
   final _additionalInfoController = TextEditingController();
 
-  void _handleScan() {
-    setState(() => _scanning = true);
-    // Simulate OCR delay
-    Future.delayed(const Duration(seconds: 2), () {
+  Future<void> _handleScan() async {
+    final ImagePicker picker = ImagePicker();
+    try {
+      final XFile? image = await picker.pickImage(source: ImageSource.camera);
+      if (image == null) return;
+
+      setState(() => _scanning = true);
+
+      final inputImage = InputImage.fromFilePath(image.path);
+      final textRecognizer =
+          TextRecognizer(script: TextRecognitionScript.latin);
+      final RecognizedText recognizedText =
+          await textRecognizer.processImage(inputImage);
+
+      _parseOcrText(recognizedText.text);
+
+      await textRecognizer.close();
+    } catch (e) {
       if (mounted) {
-        setState(() {
-          _bopController.text = '00615/2023.101174-7';
-          _protocolController.text = '2025.01.090674';
-          _requisitionController.text = '00001-2025-126567-6';
-          _crimeTypeController.text =
-              'Estelionato > Estelionato simples (Art 171)';
-          _policeStationController.text =
-              'DIVISÃO DE COMBATE A CRIMES CIBERNÉTICOS';
-          _requestingAuthorityController.text = 'TOBIAS FERREIRA RODRIGUES';
-          _requestDateTimeController.text = '24/11/2025 15:44:08';
-          _caseNumberController.text = '2025.056800';
-          _occurrenceLocationController.text = 'INTERNET';
-          _addressController.text = 'AZ DE OURO, N. 87, LEVILÂNDIA, ANANINDEUA';
-          _forensicAreaController.text = 'AUDIOVISUAL / ANÁLISE DE CONTEÚDO';
-          _additionalInfoController.text =
-              'REALIZAR PERÍCIA EM LOCAL DE INTERNET';
-          _scanning = false;
-        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro no OCR: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _scanning = false);
+      }
+    }
+  }
+
+  void _parseOcrText(String text) {
+    // Normalize text to uppercase for easier matching
+    final upperText = text.toUpperCase();
+
+    // Helper to extract value using Regex
+    String? extract(String pattern) {
+      final regex = RegExp(pattern, multiLine: true, dotAll: true);
+      final match = regex.firstMatch(upperText);
+      if (match != null && match.groupCount >= 1) {
+        return match.group(1)?.trim();
+      }
+      return null;
+    }
+
+    setState(() {
+      // 1. Requisição (REQUISIÇÃO ONLINE DE PERÍCIA - Nº ...)
+      // Uses . for accented characters to be more robust (PER.CIA)
+      final reqMatch = extract(r'REQUISI..O.*PER.CIA.*N[ºo°]\s*([\d-]+)');
+      if (reqMatch != null) _requisitionController.text = reqMatch;
+
+      // 2. Inquérito/BOP (INQUÉRITO POR PORTARIA/FLAGRANTE nº ...)
+      final bopMatch = extract(r'INQU.RITO.*N[ºo°]\s*([\d./-]+)');
+      if (bopMatch != null) _bopController.text = bopMatch;
+
+      // 3. Identificação do Fato (Tipo de Crime)
+      final crimeMatch = extract(r'IDENTIFICA..O DO FATO:\s*(.*)');
+      if (crimeMatch != null) _crimeTypeController.text = crimeMatch;
+
+      // 4. Unidade Requisitante (Delegacia)
+      final unitMatch = extract(r'UNIDADE REQUISITANTE:\s*(.*)');
+      if (unitMatch != null) _policeStationController.text = unitMatch;
+
+      // 5. Número do Caso
+      final caseMatch = extract(r'N.MERO DO CASO:\s*([\d.]+)');
+      if (caseMatch != null) _caseNumberController.text = caseMatch;
+
+      // 6. Número do Protocolo
+      final protocolMatch = extract(r'N.MERO DO PROTOCOLO:\s*([\d.]+)');
+      if (protocolMatch != null) _protocolController.text = protocolMatch;
+
+      // 7. Autoridade Requisitante
+      final authMatch = extract(r'AUTORIDADE REQUISITANTE:\s*(.*)');
+      if (authMatch != null) _requestingAuthorityController.text = authMatch;
+
+      // 8. Local de Ocorrência
+      final localMatch = extract(r'LOCAL DE OCORR.NCIA:\s*(.*)');
+      if (localMatch != null) _occurrenceLocationController.text = localMatch;
+
+      // 9. Endereço do Fato/Perícia
+      final addressMatch = extract(r'ENDERE.O DO FATO/PER.CIA:\s*(.*)');
+      if (addressMatch != null) _addressController.text = addressMatch;
+
+      // 10. Área Pericial
+      final areaMatch = extract(r'.REA PERICIAL / EXAME:\s*(.*)');
+      if (areaMatch != null) _forensicAreaController.text = areaMatch;
+
+      // 11. Data/Hora Requisição
+      final dateMatch = extract(r'DATA/HORA REQUISI..O:\s*([\d/ :]+)');
+      if (dateMatch != null) _requestDateTimeController.text = dateMatch;
+
+      // 12. Informações Adicionais (Observações)
+      final infoMatch =
+          extract(r'INFORMA..ES ADICIONAIS:\s*([\s\S]*?)(?:ASSINATURAS:|$)');
+      if (infoMatch != null) {
+        _additionalInfoController.text = infoMatch.replaceAll('\n', ' ').trim();
+      }
+
+      // Auto-select model based on keywords
+      final fullContext = (infoMatch ?? '') + (areaMatch ?? '');
+      if (fullContext.contains('CELULAR') ||
+          fullContext.contains('SMARTPHONE') ||
+          fullContext.contains('MOTOROLA') ||
+          fullContext.contains('SAMSUNG') ||
+          fullContext.contains('IPHONE')) {
+        _model = 'celular';
+      } else if (fullContext.contains('COMPUTADOR') ||
+          fullContext.contains('NOTEBOOK') ||
+          fullContext.contains('LAPTOP')) {
+        _model = 'computador';
       }
     });
   }
@@ -301,8 +389,11 @@ class _OccurrenceDataPageState extends State<OccurrenceDataPage> {
                         : () {
                             Navigator.of(context).push(
                               MaterialPageRoute(
-                                  builder: (context) =>
-                                      const GuidedCollectionPage()),
+                                builder: (context) => GuidedCollectionPage(
+                                  bop: _bopController.text,
+                                  model: _model,
+                                ),
+                              ),
                             );
                           },
                     style: ElevatedButton.styleFrom(
